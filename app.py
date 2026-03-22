@@ -5,45 +5,66 @@ import plotly.express as px
 import time
 
 # Configuration de la page
-st.set_page_config(page_title="Live Strasbourg 2026", layout="wide")
-st.title("🗳️ Résultats en direct - Strasbourg (2nd tour)")
+st.set_page_config(page_title="Strasbourg 2026 - Résultats Live", layout="wide")
 
-# URL de l'API Open Data Strasbourg (Dataset 2026)
-API_URL = "https://data.strasbourg.eu/api/records/1.0/search/"
-params = {
-    "dataset": "elections-municipales-2026-2e-tour",
-    "q": "",
-    "rows": 100 # Pour récupérer tous les bureaux ou le cumul
-}
+st.title("🗳️ Résultats du 2nd Tour en Direct - Strasbourg")
+st.markdown("Source : *Open Data Eurométropole de Strasbourg*")
 
+# L'URL que vous avez trouvée
+URL_API = "https://data.strasbourg.eu/api/explore/v2.1/catalog/datasets/resultats-du-second-tour-des-elections-municipales-2026-version-detaillee/records?limit=100"
+
+# Zone de rafraîchissement
 placeholder = st.empty()
 
 while True:
     try:
         # Récupération des données
-        response = requests.get(API_URL, params=params)
+        response = requests.get(URL_API)
         data = response.json()
         
-        # Extraction et formatage (à adapter selon les champs précis de l'API ce soir)
-        records = [r['fields'] for r in data['records']]
-        df = pd.DataFrame(records)
-        
-        # Exemple de traitement : Somme des voix par candidat
-        # Les colonnes types sont souvent 'nom_candidat' et 'nb_voix'
-        results = df.groupby('liste')['voix'].sum().reset_index()
-        results = results.sort_values(by='voix', ascending=False)
+        if 'results' in data and len(data['results']) > 0:
+            df = pd.DataFrame(data['results'])
+            
+            # 1. On regroupe par candidat pour avoir le total des voix
+            # Note : On vérifie les noms de colonnes typiques (nom_liste ou candidat)
+            col_candidat = 'nom_liste' if 'nom_liste' in df.columns else 'candidat'
+            col_voix = 'nb_voix' if 'nb_voix' in df.columns else 'voix'
+            
+            summary = df.groupby(col_candidat)[col_voix].sum().reset_index()
+            summary = summary.sort_values(by=col_voix, ascending=False)
+            
+            # 2. Calcul du pourcentage
+            total_voix = summary[col_voix].sum()
+            summary['%'] = (summary[col_voix] / total_voix * 100).round(2)
 
-        with placeholder.container():
-            # Affichage du graphique
-            fig = px.bar(results, x='liste', y='voix', 
-                         color='liste', title="Répartition des voix en temps réel")
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # Affichage de l'heure de mise à jour
-            st.write(f"Dernière mise à jour : {time.strftime('%H:%M:%S')}")
-            
+            with placeholder.container():
+                # Affichage des métriques principales (Top 3)
+                cols = st.columns(len(summary))
+                for i, row in enumerate(summary.itertuples()):
+                    if i < 4: # On limite l'affichage des tuiles aux 4 premiers
+                        cols[i].metric(row[1], f"{row[2]} voix", f"{row[3]} %")
+
+                # Graphique Barres
+                fig = px.bar(summary, x=col_candidat, y=col_voix, 
+                             text='%', color=col_candidat,
+                             title=f"Répartition des voix ({time.strftime('%H:%M:%S')})")
+                
+                fig.update_traces(texttemplate='%{text}%', textposition='outside')
+                st.plotly_chart(fig, use_container_width=True)
+                
+                # Tableau récapitulatif
+                st.write("### Détail des scores")
+                st.dataframe(summary, use_container_width=True)
+                
+                st.info(f"Dernière mise à jour automatique à {time.strftime('%H:%M:%S')}. "
+                        f"Nombre de lignes de données traitées : {len(df)}")
+        else:
+            with placeholder.container():
+                st.warning("🔄 Connexion établie. En attente de l'injection des premières données par la ville...")
+                st.image("https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExNHJpbmZqZ3RreXF6YnR6eW16eW16eW16eW16eW16eW16eW16&ep=v1_gifs_search&rid=giphy.gif&ct=g", width=200)
+
     except Exception as e:
-        st.error(f"En attente des premières données... ({e})")
+        st.error(f"Une erreur est survenue : {e}")
     
-    # Pause de 60 secondes avant le prochain update
-    time.sleep(60)
+    # Attend 30 secondes avant de recommencer
+    time.sleep(30)
